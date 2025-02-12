@@ -1,194 +1,81 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QR Code Reader</title>
-    <style>
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background-color: #f0f0f0;
-            flex-direction: column;
-        }
-        video {
-            border: 1px solid black;
-            width: 320px;
-            height: 240px;
-        }
-        #output {
-            margin-top: 20px;
-            font-size: 1.2em;
-            color: red;
-        }
-        #log {
-            margin-top: 10px;
-            font-size: 0.9em;
-            max-height: 100px;
-            overflow-y: auto;
-            width: 90%;
-            border: 1px solid #ccc;
-            background: #fff;
-            padding: 5px;
-        }
-    </style>
-</head>
-<body>
-    <h1>QR Code Reader</h1>
-    <video id="video" autoplay></video>
-    <div id="output">Waiting for QR Code...</div>
-    <div id="log">Log de Erros:</div>
+<script>
+    const MAX_PASSAGES_PER_DAY = 4;
+    const MIN_INTERVAL = 300000; // 5 minutos
+    const GOOGLE_SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_4CEY6Jman7yJHWyx2WQtVCyf-aVkJOZhfsfiKkv6qYj0WDB6-wBlGfckJH2hCGZW/exec";
 
-    <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
-    <script>
-        const video = document.getElementById('video');
-        const output = document.getElementById('output');
-        const logDiv = document.getElementById('log');
-        let scanResult = '';
+    function canRegister(qrData) {
+        const [nomeRazaoSocial, cpf, placa] = qrData.split(',');
+        const today = new Date().toLocaleDateString();
+        
+        let dailyPassages = JSON.parse(localStorage.getItem("dailyPassages")) || { date: today, plates: {} };
 
-        // URL do Google Apps Script
-        const googleSheetsUrl = "https://script.google.com/macros/s/AKfycbx_4CEY6Jman7yJHWyx2WQtVCyf-aVkJOZhfsfiKkv6qYj0WDB6-wBlGfckJH2hCGZW/exec";
-
-        // Tempo mínimo entre leituras da mesma placa (5 minutos = 300000 ms)
-        const MIN_INTERVAL = 300000;
-
-        // Acessar a câmera
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then((stream) => {
-            video.srcObject = stream;
-        }).catch(err => logError("Erro ao acessar a câmera: " + err.message));
-
-        // Função para ler QR Code a partir do vídeo
-        function scanQRCode() {
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-            
-            if (code) {
-                if (scanResult !== code.data) {
-                    scanResult = code.data;
-                    output.textContent = `QR Code Detectado: ${scanResult}`;
-
-                    // Verificar se a placa já foi registrada nos últimos 5 minutos
-                    if (canRegister(scanResult)) {
-                        storeDataOffline(scanResult);
-                        sendOfflineData(); // Tentativa de envio dos dados armazenados
-                    } else {
-                        logError("Registro ignorado: Tempo mínimo de 5 minutos não cumprido.");
-                    }
-                }
-            }
+        // Reset diário
+        if (dailyPassages.date !== today) {
+            dailyPassages = { date: today, plates: {} };
         }
 
-        // Função para verificar se a placa pode ser registrada (baseado no tempo mínimo)
-        function canRegister(qrData) {
-            const dadosSeparados = qrData.split(',');
+        // Prefeitura e Secretaria têm passagens ilimitadas
+        if (nomeRazaoSocial.toLowerCase().includes("prefeitura") || nomeRazaoSocial.toLowerCase().includes("secretaria")) {
+            return true;
+        }
 
-            if (dadosSeparados.length === 4) {
-                const placa = dadosSeparados[2];
-                let lastRecords = JSON.parse(localStorage.getItem("lastRecords")) || {};
-                let currentTime = new Date().getTime();
-
-                if (lastRecords[placa] && (currentTime - lastRecords[placa]) < MIN_INTERVAL) {
-                    return false; // Ainda dentro do intervalo de 5 minutos
-                }
-
-                // Atualiza o horário da última passagem dessa placa
-                lastRecords[placa] = currentTime;
-                localStorage.setItem("lastRecords", JSON.stringify(lastRecords));
-
-                return true;
-            }
+        // Verifica se a placa já passou 4 vezes no dia
+        if (dailyPassages.plates[placa] >= MAX_PASSAGES_PER_DAY) {
+            alert(`🚨 A placa ${placa} já atingiu o limite de 4 passagens hoje!`);
             return false;
         }
 
-        // Função para armazenar os dados no localStorage
-        function storeDataOffline(qrData) {
-            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
-            offlineData.push({ data: qrData, timestamp: new Date().toISOString() });
-            localStorage.setItem("offlineData", JSON.stringify(offlineData));
-            output.textContent += "\nDados armazenados offline!";
-        }
+        // Atualiza a contagem
+        dailyPassages.plates[placa] = (dailyPassages.plates[placa] || 0) + 1;
+        localStorage.setItem("dailyPassages", JSON.stringify(dailyPassages));
 
-        // Função para enviar os dados ao Google Sheets
-        function sendToGoogleSheets(qrData) {
-            const dadosSeparados = qrData.split(',');
+        return true;
+    }
 
-            if (dadosSeparados.length === 4) {
-                const data = {
-                    nome: dadosSeparados[0],
-                    cpf: dadosSeparados[1],
-                    placa: dadosSeparados[2],
-                    classificacao: dadosSeparados[3]
-                };
-
-                return fetch(googleSheetsUrl, {
-                    method: "POST",
-                    mode: "no-cors",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify(data)
-                }).catch(err => {
-                    logError("Erro ao enviar dados ao Google Sheets: " + err.message);
-                });
+    function sendToGoogleSheets(qrData) {
+        fetch(GOOGLE_SHEETS_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ qrData })
+        })
+        .then(response => {
+            if (response.ok) {
+                console.log("✅ Dados enviados com sucesso!");
             } else {
-                logError("Formato de QR Code incorreto.");
-                return Promise.reject("Formato inválido");
+                console.error("❌ Falha no envio:", response.status);
+                storeDataOffline(qrData);
             }
-        }
+        })
+        .catch(err => {
+            console.error("❌ Erro ao enviar:", err);
+            storeDataOffline(qrData);
+        });
+    }
 
-        // Função para tentar enviar os dados armazenados localmente
-        function sendOfflineData() {
-            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+    function storeDataOffline(qrData) {
+        let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+        offlineData.push({ data: qrData, timestamp: new Date().toISOString() });
+        localStorage.setItem("offlineData", JSON.stringify(offlineData));
+    }
 
-            if (offlineData.length > 0) {
-                output.textContent = "Tentando enviar dados offline armazenados...";
-                
-                let promises = offlineData.map(entry => sendToGoogleSheets(entry.data));
+    function sendOfflineData() {
+        let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+        offlineData.forEach((entry, index) => {
+            sendToGoogleSheets(entry.data);
+            offlineData.splice(index, 1);
+        });
+        localStorage.setItem("offlineData", JSON.stringify(offlineData));
+    }
 
-                Promise.allSettled(promises).then(results => {
-                    let successfulUploads = results.filter(r => r.status === "fulfilled").length;
+    function cleanOldData() {
+        let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+        let sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-                    if (successfulUploads > 0) {
-                        output.textContent += `\n${successfulUploads} registros enviados!`;
-                        localStorage.removeItem("offlineData");
-                    } else {
-                        logError("Tentativa de envio falhou. Mantendo dados offline.");
-                    }
-                }).catch(err => logError("Erro ao processar envios offline: " + err.message));
-            }
-        }
+        offlineData = offlineData.filter(entry => new Date(entry.timestamp) >= sevenDaysAgo);
+        localStorage.setItem("offlineData", JSON.stringify(offlineData));
+    }
 
-        // Função para registrar erros no log e salvar no localStorage
-        function logError(message) {
-            const timestamp = new Date().toLocaleString();
-            const errorMessage = `[${timestamp}] ${message}`;
-
-            let errorLog = JSON.parse(localStorage.getItem("errorLog")) || [];
-            errorLog.push(errorMessage);
-            localStorage.setItem("errorLog", JSON.stringify(errorLog));
-
-            logDiv.innerHTML += `<div>${errorMessage}</div>`;
-        }
-
-        // Exibir logs anteriores ao carregar a página
-        function loadErrorLog() {
-            let errorLog = JSON.parse(localStorage.getItem("errorLog")) || [];
-            logDiv.innerHTML = errorLog.map(entry => `<div>${entry}</div>`).join('');
-        }
-
-        // Carregar logs de erro ao iniciar
-        loadErrorLog();
-
-        setInterval(scanQRCode, 1000); // Scanner a cada segundo
-        setInterval(sendOfflineData, 30000); // Tentar reenviar dados a cada 30 segundos
-    </script>
-</body>
-</html>
+    setInterval(sendOfflineData, 30000); // Tentar reenviar dados a cada 30 segundos
+    setInterval(cleanOldData, 86400000); // Limpar dados antigos a cada 24 horas
+</script>
