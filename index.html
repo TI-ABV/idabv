@@ -1,81 +1,164 @@
-<script>
-    const MAX_PASSAGES_PER_DAY = 4;
-    const MIN_INTERVAL = 300000; // 5 minutos
-    const GOOGLE_SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_4CEY6Jman7yJHWyx2WQtVCyf-aVkJOZhfsfiKkv6qYj0WDB6-wBlGfckJH2hCGZW/exec";
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Reader</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+            flex-direction: column;
+        }
+        video {
+            border: 1px solid black;
+            width: 320px;
+            height: 240px;
+        }
+        #output {
+            margin-top: 20px;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>QR Code Reader</h1>
+    <video id="video" autoplay></video>
+    <div id="output">Aguardando leitura do QR Code...</div>
 
-    function canRegister(qrData) {
-        const [nomeRazaoSocial, cpf, placa] = qrData.split(',');
-        const today = new Date().toLocaleDateString();
-        
-        let dailyPassages = JSON.parse(localStorage.getItem("dailyPassages")) || { date: today, plates: {} };
+    <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const output = document.getElementById('output');
+        let scanResult = '';
 
-        // Reset diário
-        if (dailyPassages.date !== today) {
-            dailyPassages = { date: today, plates: {} };
+        // URL do Google Apps Script
+        const GOOGLE_SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_4CEY6Jman7yJHWyx2WQtVCyf-aVkJOZhfsfiKkv6qYj0WDB6-wBlGfckJH2hCGZW/exec";
+
+        // Configurações do sistema
+        const MAX_PASSAGES_PER_DAY = 4;
+        const MIN_INTERVAL = 300000; // 5 minutos
+
+        // Acessar a câmera
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+            .then(stream => video.srcObject = stream)
+            .catch(err => console.error("Erro ao acessar a câmera:", err));
+
+        // Função para ler QR Code a partir do vídeo
+        function scanQRCode() {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
+            
+            if (code && scanResult !== code.data) {
+                scanResult = code.data;
+                output.textContent = `QR Code Detectado: ${scanResult}`;
+
+                if (canRegister(scanResult)) {
+                    storeDataOffline(scanResult);
+                    sendOfflineData();
+                }
+            }
         }
 
-        // Prefeitura e Secretaria têm passagens ilimitadas
-        if (nomeRazaoSocial.toLowerCase().includes("prefeitura") || nomeRazaoSocial.toLowerCase().includes("secretaria")) {
+        // Função para verificar se a placa pode ser registrada
+        function canRegister(qrData) {
+            const [nomeRazaoSocial, cpf, placa] = qrData.split(',');
+            const today = new Date().toLocaleDateString();
+
+            let dailyPassages = JSON.parse(localStorage.getItem("dailyPassages")) || { date: today, plates: {} };
+
+            // Reset diário do contador de passagens
+            if (dailyPassages.date !== today) {
+                dailyPassages = { date: today, plates: {} };
+            }
+
+            // Prefeitura e Secretaria têm passagens ilimitadas
+            if (nomeRazaoSocial.toLowerCase().includes("prefeitura") || nomeRazaoSocial.toLowerCase().includes("secretaria")) {
+                output.textContent = `✅ Veículo oficial identificado: ${nomeRazaoSocial}. Passagem liberada!`;
+                output.style.color = "green";
+                return true;
+            }
+
+            // Verifica se a placa já passou 4 vezes no dia
+            if (dailyPassages.plates[placa] >= MAX_PASSAGES_PER_DAY) {
+                output.textContent = `🚨 A placa ${placa} já atingiu o limite de 4 passagens hoje!`;
+                output.style.color = "red";
+                return false;
+            }
+
+            // Atualiza a contagem
+            dailyPassages.plates[placa] = (dailyPassages.plates[placa] || 0) + 1;
+            localStorage.setItem("dailyPassages", JSON.stringify(dailyPassages));
+
             return true;
         }
 
-        // Verifica se a placa já passou 4 vezes no dia
-        if (dailyPassages.plates[placa] >= MAX_PASSAGES_PER_DAY) {
-            alert(`🚨 A placa ${placa} já atingiu o limite de 4 passagens hoje!`);
-            return false;
+        // Função para enviar dados ao Google Sheets
+        async function sendToGoogleSheets(qrData) {
+            try {
+                let response = await fetch(GOOGLE_SHEETS_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ qrData })
+                });
+
+                if (response.ok) {
+                    output.textContent = "✅ Dados enviados com sucesso!";
+                    output.style.color = "green";
+                    return true;
+                } else {
+                    console.error("❌ Falha no envio:", response.status);
+                    storeDataOffline(qrData);
+                    return false;
+                }
+            } catch (err) {
+                console.error("❌ Erro ao enviar:", err);
+                storeDataOffline(qrData);
+                return false;
+            }
         }
 
-        // Atualiza a contagem
-        dailyPassages.plates[placa] = (dailyPassages.plates[placa] || 0) + 1;
-        localStorage.setItem("dailyPassages", JSON.stringify(dailyPassages));
+        // Função para armazenar os dados offline
+        function storeDataOffline(qrData) {
+            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+            offlineData.push({ data: qrData, timestamp: new Date().toISOString() });
+            localStorage.setItem("offlineData", JSON.stringify(offlineData));
+        }
 
-        return true;
-    }
+        // Função para enviar os dados armazenados localmente
+        function sendOfflineData() {
+            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+            offlineData.forEach((entry, index) => {
+                sendToGoogleSheets(entry.data);
+                offlineData.splice(index, 1);
+            });
+            localStorage.setItem("offlineData", JSON.stringify(offlineData));
+        }
 
-    function sendToGoogleSheets(qrData) {
-        fetch(GOOGLE_SHEETS_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ qrData })
-        })
-        .then(response => {
-            if (response.ok) {
-                console.log("✅ Dados enviados com sucesso!");
-            } else {
-                console.error("❌ Falha no envio:", response.status);
-                storeDataOffline(qrData);
-            }
-        })
-        .catch(err => {
-            console.error("❌ Erro ao enviar:", err);
-            storeDataOffline(qrData);
-        });
-    }
+        // Função para limpar dados antigos (mantém apenas os últimos 7 dias)
+        function cleanOldData() {
+            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+            let sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    function storeDataOffline(qrData) {
-        let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
-        offlineData.push({ data: qrData, timestamp: new Date().toISOString() });
-        localStorage.setItem("offlineData", JSON.stringify(offlineData));
-    }
+            offlineData = offlineData.filter(entry => new Date(entry.timestamp) >= sevenDaysAgo);
+            localStorage.setItem("offlineData", JSON.stringify(offlineData));
+        }
 
-    function sendOfflineData() {
-        let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
-        offlineData.forEach((entry, index) => {
-            sendToGoogleSheets(entry.data);
-            offlineData.splice(index, 1);
-        });
-        localStorage.setItem("offlineData", JSON.stringify(offlineData));
-    }
-
-    function cleanOldData() {
-        let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
-        let sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-        offlineData = offlineData.filter(entry => new Date(entry.timestamp) >= sevenDaysAgo);
-        localStorage.setItem("offlineData", JSON.stringify(offlineData));
-    }
-
-    setInterval(sendOfflineData, 30000); // Tentar reenviar dados a cada 30 segundos
-    setInterval(cleanOldData, 86400000); // Limpar dados antigos a cada 24 horas
-</script>
+        // Iniciar verificações periódicas
+        setInterval(scanQRCode, 1000); // Scanner a cada segundo
+        setInterval(sendOfflineData, 30000); // Tentar reenviar dados a cada 30 segundos
+        setInterval(cleanOldData, 86400000); // Limpar dados antigos a cada 24 horas
+    </script>
+</body>
+</html>
