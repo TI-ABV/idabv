@@ -39,7 +39,7 @@
         let scanResult = "";
 
         // URL do Google Apps Script
-        const GOOGLE_SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_4CEY6Jman7yJHWyx2WQtVCyf-aVkJOZhfsfiKkv6qYj0WDB6-wBlGfckJH2hCGZW/exec";
+        const GOOGLE_SHEETS_URL = "https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec"; // Substitua pelo seu ID correto!
 
         // Configuração de limites
         const MAX_PASSAGES_PER_DAY = 4;
@@ -53,6 +53,16 @@
             } catch (err) {
                 output.textContent = "Erro ao acessar a câmera: " + err.message;
                 output.style.color = "red";
+            }
+        }
+
+        // Testar conexão antes de enviar
+        async function checkConnection() {
+            try {
+                const response = await fetch(GOOGLE_SHEETS_URL, { method: "HEAD" });
+                return response.ok;
+            } catch {
+                return false;
             }
         }
 
@@ -112,6 +122,15 @@
 
         // Enviar dados ao Google Sheets
         async function sendToGoogleSheets(qrData) {
+            const isOnline = await checkConnection();
+
+            if (!isOnline) {
+                output.textContent = "⚠ Sem conexão, armazenando offline...";
+                output.style.color = "orange";
+                storeDataOffline(qrData);
+                return;
+            }
+
             try {
                 let response = await fetch(GOOGLE_SHEETS_URL, {
                     method: "POST",
@@ -142,16 +161,18 @@
         }
 
         // Enviar dados offline quando possível
-        function sendOfflineData() {
-            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+        async function sendOfflineData() {
+            let isOnline = await checkConnection();
+            if (!isOnline) return;
 
-            if (offlineData.length > 0) {
-                offlineData.forEach((entry, index) => {
-                    sendToGoogleSheets(entry.data);
-                    offlineData.splice(index, 1);
-                });
-                localStorage.setItem("offlineData", JSON.stringify(offlineData));
+            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+            if (offlineData.length === 0) return;
+
+            for (let i = 0; i < offlineData.length; i++) {
+                await sendToGoogleSheets(offlineData[i].data);
             }
+
+            localStorage.removeItem("offlineData");
         }
 
         // Iniciar câmera ao carregar a página
