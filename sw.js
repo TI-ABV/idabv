@@ -1,7 +1,8 @@
 const CACHE_NAME = "qr-scanner-cache-v1";
 const FILES_TO_CACHE = [
-    "/index.html",
-    "/sw.js",
+    "/idabv/index.html",  // Caminho correto para o GitHub Pages
+    "/idabv/sw.js",
+    "/idabv/style.css",
     "https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"
 ];
 
