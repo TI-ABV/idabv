@@ -91,13 +91,8 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data)
             })
-            .then(response => response.json())
-            .then(result => {
-                if (result.success) {
-                    output.textContent = "Passagem registrada com sucesso!";
-                } else {
-                    output.textContent = "Erro ao registrar passagem.";
-                }
+            .then(response => {
+                output.textContent = "Passagem registrada com sucesso!";
             })
             .catch(error => {
                 output.textContent = "Erro ao enviar dados: " + error.message;
