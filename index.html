@@ -32,21 +32,13 @@
     <video id="video" autoplay></video>
     <div id="output">Aguardando leitura...</div>
 
-    <script>
-        if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("/idabv/sw.js")  // Agora o caminho está correto para GitHub Pages
-                .then(() => console.log("Service Worker registrado!"))
-                .catch((err) => console.log("Falha ao registrar Service Worker", err));
-        }
-    </script>
-
     <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
     <script>
         const video = document.getElementById("video");
         const output = document.getElementById("output");
         let scanResult = "";
 
-        // ✅ URL do Google Sheets
+        // ✅ URL correta do Google Sheets
         const GOOGLE_SHEETS_URL = "https://script.google.com/macros/s/AKfycbx_4CEY6Jman7yJHWyx2WQtVCyf-aVkJOZhfsfiKkv6qYj0WDB6-wBlGfckJH2hCGZW/exec";
 
         // ✅ Configuração de limites
@@ -77,8 +69,51 @@
 
             if (code && scanResult !== code.data) {
                 scanResult = code.data;
-                sendToGoogleSheets(scanResult);
+
+                if (canRegister(scanResult)) {
+                    sendToGoogleSheets(scanResult);
+                }
             }
+        }
+
+        // ✅ Verificar se a placa pode ser registrada
+        function canRegister(qrData) {
+            const [nomeRazaoSocial, cpf, placa] = qrData.split(",");
+            const currentTime = new Date().getTime();
+            const today = new Date().toLocaleDateString();
+
+            let dailyPassages = JSON.parse(localStorage.getItem("dailyPassages")) || { date: today, plates: {} };
+            let lastPassages = JSON.parse(localStorage.getItem("lastPassages")) || {};
+
+            // Reset diário
+            if (dailyPassages.date !== today) {
+                dailyPassages = { date: today, plates: {} };
+                lastPassages = {};
+            }
+
+            // ✅ Prefeitura e Secretaria têm passagens ilimitadas
+            if (nomeRazaoSocial.toLowerCase().includes("prefeitura") || nomeRazaoSocial.toLowerCase().includes("secretaria")) {
+                return true;
+            }
+
+            // ✅ Verifica se a placa já atingiu o limite diário
+            if (dailyPassages.plates[placa] >= MAX_PASSAGES_PER_DAY) {
+                return false;
+            }
+
+            // ✅ Verifica se a última passagem foi há menos de 5 minutos
+            if (lastPassages[placa] && (currentTime - lastPassages[placa]) < MIN_INTERVAL) {
+                return false;
+            }
+
+            // ✅ Atualiza a contagem de passagens e o último horário
+            dailyPassages.plates[placa] = (dailyPassages.plates[placa] || 0) + 1;
+            lastPassages[placa] = currentTime;
+
+            localStorage.setItem("dailyPassages", JSON.stringify(dailyPassages));
+            localStorage.setItem("lastPassages", JSON.stringify(lastPassages));
+
+            return true;
         }
 
         // ✅ Enviar dados ao Google Sheets
@@ -103,11 +138,34 @@
             }
         }
 
+        // ✅ Armazena dados offline se não houver internet
+        function storeDataOffline(qrData) {
+            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+            offlineData.push({ data: qrData, timestamp: new Date().toISOString() });
+            localStorage.setItem("offlineData", JSON.stringify(offlineData));
+        }
+
+        // ✅ Tenta reenviar os dados armazenados quando a internet voltar
+        async function sendOfflineData() {
+            let offlineData = JSON.parse(localStorage.getItem("offlineData")) || [];
+
+            if (offlineData.length === 0) return;
+
+            for (let i = 0; i < offlineData.length; i++) {
+                await sendToGoogleSheets(offlineData[i].data);
+            }
+
+            localStorage.removeItem("offlineData");
+        }
+
         // ✅ Iniciar a câmera ao carregar a página
         startCamera();
 
         // ✅ Escanear QR Code a cada segundo
         setInterval(scanQRCode, 1000);
+
+        // ✅ Tenta reenviar os dados offline a cada 30 segundos
+        setInterval(sendOfflineData, 30000);
     </script>
 </body>
 </html>
